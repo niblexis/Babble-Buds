@@ -111,8 +111,105 @@ exports.init = function() {
             sprite.layer = layer
             sprite.emote = emote
             clickableAssets.push(sprite)
-        }
+        }        
         return sprite
+    }
+    stage.applyTransformations = function(asset, bundle) {
+        var newAsset = JSON.parse(JSON.stringify(asset))
+        newAsset.x = bundle.x + Math.cos(bundle.rotation) * asset.x * bundle.scaleX - Math.sin(bundle.rotation) * asset.y * bundle.scaleY
+        newAsset.y = bundle.y + Math.cos(bundle.rotation) * asset.y * bundle.scaleY - Math.sin(bundle.rotation) * asset.x * bundle.scaleX
+        console.log(bundle.x, bundle.y, asset.x, bundle.scaleX, asset.y, bundle.scaleY)
+        console.log(newAsset)
+        return newAsset
+    }
+    stage.applyAssetBundle = function(puppet, asset, stack) {
+        // So here we're doing some tricky stuff to make asset bundles work
+        // The issue is that a sprite can't be in two different containers at the same time
+        // but we have two things we want to use containers for:
+        // 1. We want the asset bundle to be in a container so it can be moved, rotated, etc. collectively
+        // 2. We want the assets to be in the various layer containers they belong to, so that they render in the right order
+        // So what we do is make two sprites for each asset. One gets added to a container for the asset bundle that can be manipulated right
+        // and the other to the respective layer container. I keep links between the two so that whenever I update the invisible container, I
+        // can set the position, etc. of the visible assets
+
+        // But wait, there's another problem! Our anchor point for our sprites is the center of the bottom of the sprite, because that makes
+        // the most sense with the way the puppets are made. However, containers are forced to be anchored at their center, and it's really
+        // hard to get the math right to make it so that we can still find the position, rotation, etc. of the individual assets that make
+        // up the bundle. I think there are two potential ways to resolve this:
+        // 1. Make another sprite, add that one to clickableAssets instead of the bundle, and manipulate the bundle to be in the same state
+        // as the sprite before changing the information on the individual sprite assets
+        // 2. Use a sprite for our container, because sprites are actually containers. I don't know if this will work, but I'm trying this
+        // first because it's easier and cleaner. I'm leaving this here just so I have something to reference in the event it doesn't work.
+        // If it does work, and this is still here, it's probably my vanity wanting proof of how I went about solving this problem
+        // Wait a second, why does it say sprite.anchor.set(0.5) in the getAsset function???? Fuck, did I change how the anchor point works???
+        // Dang it, I'm going to have to actually remove this once I'm done
+        // TODO remove this when I'm done!!!
+        // Regardless, I'm going to start by making it a sprite and doing as much as I can to make it behave similarly to the sprites output
+        // from the getAsset function
+        // TODO recursively apply asset bundles
+
+        let bundle = this.assets[asset.id].bundle
+
+        let container = new Sprite()
+        container.anchor.set(0.5)
+        container.rotation = asset.rotation
+        container.scale.x = asset.scaleX
+        container.scale.y = asset.scaleY
+        container.layer = 'bundles'
+        container.asset = asset
+        container.bundle = bundle
+        container.assets = []
+        container.alpha = 1
+        puppet.container.addChild(container)
+        console.log(this.assets[asset.id], bundle)
+
+        stack.push(asset.id)
+        for (var j = 0; j < bundle.bundles.length; j++) {
+            stage.applyAssetBundle(puppet, bundle.bundles[i], stack)
+        }
+        for (let i = 0; i < bundle.body.length; i++) {
+            let sprite = this.getAsset(bundle.body[i])
+            puppet.body.addChild(sprite)
+            container.addChild(this.getAsset(this.applyTransformations(bundle.body[i], asset)))
+            container.assets.push(sprite)
+        }
+        for (let i = 0; i < bundle.head.length; i++) {
+            let sprite = this.getAsset(this.applyTransformations(bundle.head[i], asset))
+            puppet.headBase.addChild(sprite)
+            container.addChild(this.getAsset(this.applyTransformations(bundle.head[i], asset)))
+            container.assets.push(sprite)
+        }
+        for (let i = 0; i < bundle.emotes.length; i++) {
+            for (let j = 0; j < bundle.emotes[i].mouth.length; j++) {
+                let sprite = this.getAsset(this.applyTransformations(bundle.emotes[i].mouth[j], asset))
+                puppet.emotes[emotes[i]].mouth.addChild(sprite)
+                container.addChild(this.getAsset(this.applyTransformations(bundle.emotes[i].mouth[j], asset)))
+                container.assets.push(sprite)
+            }
+            for (let j = 0; j < bundle.emotes[i].eyes.length; j++) {
+                let sprite = this.getAsset(this.applyTransformations(bundle.emotes[i].eyes[j], asset))
+                puppet.emotes[emotes[i]].eyes.addChild(sprite)
+                container.addChild(this.getAsset(this.applyTransformations(bundle.emotes[i].eyes[j], asset)))
+                container.assets.push(sprite)
+            }
+        }
+        for (let i = 0; i < bundle.hat.length; i++) {
+            let sprite = this.getAsset(this.applyTransformations(bundle.hat[i], asset))
+            puppet.hat.addChild(sprite)
+            container.addChild(this.getAsset(this.applyTransformations(bundle.hat[i], asset)))
+            container.assets.push(sprite)
+        }
+        for (let i = 0; i < bundle.props.length; i++) {
+            let sprite = this.getAsset(this.applyTransformations(bundle.props[i], asset))
+            puppet.props.addChild(sprite)
+            container.addChild(this.getAsset(this.applyTransformations(bundle.props[i], asset)))
+            container.assets.push(sprite)
+        }
+
+        console.log(container, container.x, container.y, container.width, container.height)
+
+        if (!stack.length) clickableAssets.push(container)
+        updateAssetBundle(container)
     }
 
     // Make mousedown work on entire stage
@@ -186,7 +283,56 @@ exports.init = function() {
     document.getElementById('cancel-import-puppets').addEventListener('click', controller.openModal)
     document.getElementById('import-puppets-btn').addEventListener('click', confirmImportPuppets)
     document.getElementById('new-asset-bundle').addEventListener('click', () => {
-        status.log('Not Yet Implemented!', 1, 1)
+        let id = project.getNewAssetId()
+        let tab = document.getElementById('asset tabs').value
+        // Create empty thumbnail file
+        fs.writeFileSync(path.join(project.assetsPath, settings.settings.uuid, id + '.thumb.png'), new Buffer("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NgAAIAAAUAAarVyFEAAAAASUVORK5CYII=", 'base64'))
+        controller.addAsset(settings.settings.uuid + ":" + id, {
+            "tab": tab, 
+            "type": "bundle", 
+            "version": 0,
+            "panning": [],
+            "name": "New Asset Bundle", 
+            "location": path.join(settings.settings.uuid, id + '.png'),
+            "bundle": {
+                "bundles": [],
+                "body": [],
+                "head": [],
+                "hat": [],
+                "emotes": [
+                    {"enabled": true,"mouth": [],"eyes": [],"name": "Emote 1"},
+                    {"enabled": true,"mouth": [],"eyes": [],"name": "Emote 2"},
+                    {"enabled": true,"mouth": [],"eyes": [],"name": "Emote 3"},
+                    {"enabled": true,"mouth": [],"eyes": [],"name": "Emote 4"},
+                    {"enabled": true,"mouth": [],"eyes": [],"name": "Emote 5"},
+                    {"enabled": true,"mouth": [],"eyes": [],"name": "Emote 6"},
+                    {"enabled": true,"mouth": [],"eyes": [],"name": "Emote 7"},
+                    {"enabled": true,"mouth": [],"eyes": [],"name": "Emote 8"},
+                    {"enabled": true,"mouth": [],"eyes": [],"name": "Emote 9"},
+                    {"enabled": true,"mouth": [],"eyes": [],"name": "Emote 10"},
+                    {"enabled": true,"mouth": [],"eyes": [],"name": "Emote 11"},
+                    {"enabled": true,"mouth": [],"eyes": [],"name": "Emote 12"}
+                ],
+                "props": []
+            }
+        })
+        // current issues (start from bottom):
+        // review code heavily, since I've gone about this in multiple ways- for example, asset bundles don't need width/height members anymore
+        // test stuff with normal assets to make sure they're OK
+        // stuff is messed up at scale =/= 1
+        // closing project: "can't set property name of undefined" editor:160 when saving (also stage:340)
+        // server.js not working?
+        // saving asset bundle doesn't update characters using it (handle in controller.saveAssetBundleLocal)
+        // when rotating, asset bundle x and y are slightly offset when at bottom left or top right edges
+        // deleting asset bundles from puppets
+
+        // Things left to be done:
+        // asset bundles settings window (renaming, deleting, remove bobble head option, change asset list)
+        // importing asset bundle JSONs
+        // move asset bundle json to separate file (so turn "bundle" from a json object to a filename)
+        // puppet>settings "Export as asset bundle" button
+        // nested (but NOT recusrive) asset bundles
+        // move this into a function
     })
     document.getElementById('edit-asset-list').addEventListener('click', editAssetList)
     document.getElementById('asset-list-name').addEventListener('change', renameAssetList)
@@ -695,6 +841,9 @@ function editorMousemove(e) {
         // Update selected GUI's position
         selectedGui.x = selected.x * scale + selectedGui.pivot.x
         selectedGui.y = selected.y * scale + selectedGui.pivot.y
+
+        // Update asset bundle, if applicable
+        updateAssetBundle()
     }
 }
 
@@ -764,6 +913,9 @@ function resizeMousemove(e) {
     selectedGui.pivot.y = stage.screen.clientHeight - selected.height / 2 * scale - 12 + (24 + selected.height * scale) * 0.5
     selectedGui.x = selected.x * scale + selectedGui.pivot.x
     selectedGui.y = selected.y * scale + selectedGui.pivot.y
+
+    // Update asset bundle, if applicable
+    updateAssetBundle()
 }
 
 function resizeMouseup() {
@@ -791,6 +943,9 @@ function rotateMousemove(e) {
         rotation = Math.round(rotation / ROUND_ROTATION) * ROUND_ROTATION
     selected.rotation = rotation
     selectedGui.rotation = rotation
+
+    // Update asset bundle, if applicable
+    updateAssetBundle()
 }
 
 function rotateMouseup() {
@@ -806,6 +961,9 @@ function flipVertically(e) {
     selected.height *= -1
     selected.asset.scaleY *= -1
     recordChange()
+
+    // Update asset bundle, if applicable
+    updateAssetBundle()
 }
 
 function flipHorizontally(e) {
@@ -813,6 +971,9 @@ function flipHorizontally(e) {
     selected.width *= -1
     selected.asset.scaleX *= -1
     recordChange()
+
+    // Update asset bundle, if applicable
+    updateAssetBundle()
 }
 
 function mouseUp(e) {
@@ -830,7 +991,17 @@ function mouseUp(e) {
                     "scaleX": 1,
                     "scaleY": 1
                 }
+                if (project.assets[asset.asset].type === "bundle") setLayer({target: document.getElementById("bundle") })
                 switch (layer) {
+                    case "bundle":
+                        if (project.assets[asset.asset].type !== "bundle")
+                            status.log("Error: You cannot add a non-asset bundle to the asset bundles layer")
+                        console.log(project.assets[asset.asset])
+                        newAsset.x -= project.assets[asset.asset].x
+                        newAsset.y -= project.assets[asset.asset].y
+                        character.bundles.push(newAsset)
+                        exports.setPuppet(character, true, true)
+                        break
                     case "mouth":
                         puppet.emotes[puppet.emote].mouth.addChild(stage.getAsset(newAsset, layer))
                         character.emotes[puppet.emote].mouth.push(newAsset)
@@ -971,6 +1142,36 @@ function savePuppet() {
     document.getElementById("editor-save").classList.remove("highlight")
     status.log('Puppet saved!', 1, 1)
     exports.reloadPuppetList()
+}
+
+function saveBundle() {
+    status.log('Saving asset bundle...')
+    selected = null
+    if (selectedGui) stage.stage.removeChild(selectedGui)
+    oldcharacter = JSON.stringify(character)
+
+    let empty = document.createElement('canvas')
+    empty.width = stage.renderer.view.width
+    empty.height = stage.renderer.view.height
+    stage.renderer.render(stage.stage)
+    if (stage.renderer.view.toDataURL() !== empty.toDataURL()) {
+        let location = project.assets[bundle.id].location
+        location = [location.slice(0, location.length - 4), '.thumb', location.slice(location.length - 4)].join('')
+        let thumbnail = stage.getThumbnail(true)
+        bundle.x = thumbnail.x
+        bundle.y = thumbnail.y
+        console.log(bundle)
+        fs.writeFileSync(path.join(project.assetsPath, location), new Buffer(thumbnail.data, 'base64'))
+    }
+
+    let id = bundle.id
+    delete bundle.id
+    bundle.bundle = character
+    project.assets[id] = bundle
+    controller.updateAsset(id)
+    bundle.id = id
+    document.getElementById("editor-save").classList.remove("highlight")
+    status.log('Asset bundle saved!')
 }
 
 function newPuppet() {
@@ -1825,6 +2026,22 @@ function zoomOut() {
     stage.resize()
 }
 
+function updateAssetBundle(puppet) {
+    puppet = puppet || selected
+    console.log(puppet)
+    if (puppet && puppet.layer === "bundles") {
+        for (var i = 0; i < puppet.assets.length; i++) {
+            var position = puppet.assets[i].parent.toLocal(puppet.children[i].parent.toGlobal(puppet.children[i].position))
+            puppet.assets[i].position.x = position.x - Math.sin(puppet.rotation) * puppet.assets[i].height / 4 - Math.cos(puppet.rotation) * puppet.assets[i].width / 4 + puppet.assets[i].width / 4
+            puppet.assets[i].position.y = position.y + Math.cos(puppet.rotation) * puppet.assets[i].height / 4 - Math.sin(puppet.rotation) * puppet.assets[i].width / 4 - puppet.assets[i].height / 4
+            puppet.assets[i].rotation = puppet.children[i].rotation + puppet.rotation
+            puppet.assets[i].scale.x = puppet.children[i].scale.x * puppet.scale.x
+            puppet.assets[i].scale.y = puppet.children[i].scale.y * puppet.scale.y
+            updateAssetBundle(puppet.assets[i])
+        }
+    }
+}
+
 function cut() {
     if (selected) {
         electron.clipboard.writeText(JSON.stringify(selected.asset))
@@ -1870,7 +2087,7 @@ function paste() {
         case "bundle":
             if (project.assets[asset.asset].type !== "bundle") {
                 status.log("Error: You cannot add a non-asset bundle to the asset bundles layer")
-                 break
+                break
             }
             character.bundles.push(newAsset)
             exports.setPuppet(character, true, true)
